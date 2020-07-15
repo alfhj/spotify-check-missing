@@ -4,6 +4,7 @@
   "description": "Checks whether there are any songs in Liked Songs that are not present in your albums and vice versa",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
