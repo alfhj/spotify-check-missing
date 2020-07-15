@@ -1,10 +1,7 @@
 const axios = require('axios')
-// const promise = require('bluebird')
-const fs = require('fs')
 
-const token = 'BQDh-Lqfnxkn7cG5K5GBDMP1uKcqPWjrRd6ME9sSMUYUw47cZeO1x0mVyxa2nibn_V3C5DR0Qzms_vfc4iRde42B9rLEyCYHyIIsJzdekmzMXfOCO-f9oaBpbGNw2xWMpQFG1f35Vux_b7i0U2YwZyeTWdZIppE3iCGbSJ8I_HBe73M4sqxCuqmr8ozehfKbO9-3ZkdiG0sRXrzFw4SrVhIaugiQfsOkMm0rZzzJ6OEIvVn-ltE'
+const token = 'BQCnUD1Qlf-4KnCTjg-Vx19JWmta1P5wcoAJnkI_JXAqvYlPClQOAKRmv1f1YZJ4zpiqmjuSEm2Ar_OIhwwjObRlg9Xkil3VJ9eAh8h5HOIRSQK6ccIezpu5Fa50cy5oIKiWfj4MIP6OQ98vfF8D50WqeUVMTRKlVwb4R4xw2yuWiJDatzh7x13DDZLuQgy_iCbenv5A5kirvrinIR0Gr1oS11Cd85J9fbpiSNNpS2bvgzoVPPs'
 const urlBase = 'https://api.spotify.com/v1/me'
-// const apiMaxItems = 50
 const apiHeaders = {
   Authorization: `Bearer ${token}`
 }
@@ -44,36 +41,49 @@ const getItems = async (url, log) => {
   return totalItems
 }
 
-// const compareSaved = (songs, albums)
+const compareTracksToAlbums = (tracks, albums) => tracks
+  .filter(track => albums
+    .every(album => !album.tracks
+      .some(albumTrack => albumTrack.id === track.id)))
+  .map(track => track.album)
+  .reduce((total, current) => total
+    .some(album => album && album.id === current.id)
+    ? total
+    : total.concat(current)
+  , [])
+  .map(album => album.name + ' (' + album.artists[0].name + ')')
 
-const readFileIfExists = (path) => {
-  if (fs.existsSync(path)) {
-    const data = fs.readFileSync(path)
-    return JSON.parse(data)
-  }
-}
+const compareAlbumsToTracks = (tracks, albums) => albums
+  .filter(album => album.tracks
+    .some(albumTrack => !tracks
+      .some(track => track.id === albumTrack.id)))
+  .map(album => album.name + ' (' + album.artists[0].name + ')')
 
 const run = async () => {
   console.log('Getting liked songs...')
-  const tracks = readFileIfExists('tracks.json') ||
-    (await getItems(`${urlBase}/tracks`, true)).map(t => t.track)
+  const tracks = (await getItems(`${urlBase}/tracks`, true)).map(t => t.track)
 
+  console.log()
   console.log('Getting albums...')
-  const partialAlbums = readFileIfExists('albums.json') ||
-    (await getItems(`${urlBase}/albums`, true)).map(a => a.album)
+  const partialAlbums = (await getItems(`${urlBase}/albums`, true)).map(a => a.album)
 
+  console.log()
   console.log('Getting missing album tracks...')
-  const albums = await Promise.all(partialAlbums.map(async a => {
-    const albumTracks = a.tracks && a.tracks.total > a.tracks.limit
-      ? await getItems(a.tracks.href, false)
-      : a.tracks.items
-    a.tracks = albumTracks
-    return a
+  const albums = await Promise.all(partialAlbums.map(async album => {
+    const albumTracks = album.tracks && album.tracks.total > album.tracks.limit
+      ? await getItems(album.tracks.href, false)
+      : album.tracks.items
+    album.tracks = albumTracks
+    return album
   }))
 
-  // const data = JSON.stringify(tracks)
-  // fs.writeFile('songs.json', data, (err) => err && console.log(err))
-  console.log('Done!')
+  console.log()
+  console.log('Liked albums which contain songs not in library:')
+  console.log(compareAlbumsToTracks(tracks, albums).join('\n'))
+
+  console.log()
+  console.log('Albums which contains liked tracks but have not been added to library:')
+  console.log(compareTracksToAlbums(tracks, albums).join('\n'))
 }
 
 run()
