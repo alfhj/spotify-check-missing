@@ -1,6 +1,7 @@
 const axios = require('axios')
+const prompt = require('prompt-sync')()
 
-const token = 'BQCnUD1Qlf-4KnCTjg-Vx19JWmta1P5wcoAJnkI_JXAqvYlPClQOAKRmv1f1YZJ4zpiqmjuSEm2Ar_OIhwwjObRlg9Xkil3VJ9eAh8h5HOIRSQK6ccIezpu5Fa50cy5oIKiWfj4MIP6OQ98vfF8D50WqeUVMTRKlVwb4R4xw2yuWiJDatzh7x13DDZLuQgy_iCbenv5A5kirvrinIR0Gr1oS11Cd85J9fbpiSNNpS2bvgzoVPPs'
+const token = prompt('Spotify API token: ')
 const urlBase = 'https://api.spotify.com/v1/me'
 const apiHeaders = {
   Authorization: `Bearer ${token}`
