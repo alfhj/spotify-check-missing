@@ -13,7 +13,7 @@
   "author": "alfhj",
   "license": "MIT",
   "dependencies": {
-    "axios": "^0.27.2",
+    "axios": "^1.6.0",
     "prompt-sync": "^4.2.0"
   },
   "devDependencies": {
