@@ -13,8 +13,11 @@
   "author": "alfhj",
   "license": "MIT",
   "dependencies": {
-    "axios": "^0.27.2",
-    "prompt-sync": "^4.2.0"
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "open": "^10.1.0",
+    "querystring": "^0.2.1"
   },
   "devDependencies": {
     "eslint": "^8.15.0",
