@@ -551,6 +551,17 @@ input[type="text"]:focus {
   background: rgba(30, 215, 96, 0.18);
 }
 
+.btn.danger {
+  border-color: rgba(255, 123, 123, 0.26);
+  background: rgba(255, 123, 123, 0.08);
+  color: var(--danger);
+}
+
+.btn.danger:hover {
+  border-color: rgba(255, 123, 123, 0.48);
+  background: rgba(255, 123, 123, 0.15);
+}
+
 .privacy {
   margin: 12px 0 0;
   color: #6f8479;
@@ -1151,7 +1162,15 @@ input[type="text"]:focus {
   gap: 4px;
 }
 
+.group-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .group-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1323,19 +1342,16 @@ input[type="text"]:focus {
   padding: 9px 16px 2px 21px;
 }
 
-.group-foot .album-open {
-  margin: 0;
-}
-
 .album-open {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin: 8px 16px 2px 21px;
   color: var(--accent);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .album-open:hover {
@@ -1668,8 +1684,8 @@ input[type="text"]:focus {
     padding-left: 14px;
   }
 
-  .album-open {
-    margin-left: 14px;
+  .album-open-text {
+    display: none;
   }
 
   .progress-card {

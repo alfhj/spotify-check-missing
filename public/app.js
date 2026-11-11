@@ -73,7 +73,12 @@ const state = {
   canWrite: false,
   writeMode: false,
   fromCache: false,
-  changes: { tracks: new Set(), albums: new Set() },
+  changes: {
+    tracks: new Set(),
+    albums: new Set(),
+    removedTracks: new Set(),
+    removedAlbums: new Set(),
+  },
   pending: new Set(),
 };
 
@@ -455,7 +460,12 @@ function displayResult(result, { fromCache = false } = {}) {
   state.expandedSongs = new Set();
   state.expandedAlbums = new Set();
   state.query = '';
-  state.changes = { tracks: new Set(), albums: new Set() };
+  state.changes = {
+    tracks: new Set(),
+    albums: new Set(),
+    removedTracks: new Set(),
+    removedAlbums: new Set(),
+  };
   state.pending.clear();
   searchInput.value = '';
 
@@ -587,56 +597,85 @@ function formatChecked(iso) {
 
 /* ---------- Summary ---------- */
 
+// Recompute the headline counts from the cached diff plus the optimistic
+// changes applied this session. Tracking the sets directly (rather than doing
+// arithmetic on the base stats) keeps duplicate track IDs across albums exact.
 function changeCounts() {
   const groups = state.result?.albumsWithMissingSongs ?? [];
   const unliked = state.result?.unlikedAlbumGroups ?? [];
-  let trackOccurrences = 0;
-  const likedIds = new Set();
+  const { tracks: addedTracks, albums: addedAlbums, removedTracks, removedAlbums } =
+    state.changes;
+
+  const missingIds = new Set();
+  let missingInstances = 0;
+  let albumsWithMissingSongs = 0;
 
   for (const group of groups) {
+    if (removedAlbums.has(group.album.id)) continue;
+
+    const seen = new Set();
     for (const track of group.tracks) {
-      if (state.changes.tracks.has(track.id)) {
-        trackOccurrences += 1;
-        likedIds.add(track.id);
-      }
+      if (addedTracks.has(track.id) || seen.has(track.id)) continue;
+      seen.add(track.id);
+      missingIds.add(track.id);
+      missingInstances += 1;
     }
+    if (seen.size > 0) albumsWithMissingSongs += 1;
   }
 
   let savedAlbums = 0;
-  let songsInSavedAlbums = 0;
+  let unlikedAlbums = 0;
+  let likedSongsInUnlikedAlbums = 0;
+
   for (const group of unliked) {
-    if (state.changes.albums.has(group.album.id)) {
+    if (addedAlbums.has(group.album.id)) {
       savedAlbums += 1;
-      songsInSavedAlbums += group.songs.length;
+      continue;
     }
+
+    const remaining = group.songs.filter((song) => !removedTracks.has(song.id));
+    if (remaining.length === 0) continue;
+    unlikedAlbums += 1;
+    likedSongsInUnlikedAlbums += remaining.length;
   }
 
-  return { trackOccurrences, likedIds, savedAlbums, songsInSavedAlbums };
+  return {
+    missingIds,
+    missingInstances,
+    albumsWithMissingSongs,
+    savedAlbums,
+    unlikedAlbums,
+    likedSongsInUnlikedAlbums,
+  };
 }
 
 function effectiveStats() {
   const base = state.result?.stats;
   if (!base) return base;
 
-  const { trackOccurrences, likedIds, savedAlbums, songsInSavedAlbums } = changeCounts();
+  const counts = changeCounts();
 
   return {
     ...base,
-    likedSongs: base.likedSongs + likedIds.size,
-    likedAlbums: base.likedAlbums + savedAlbums,
-    missingSongs: Math.max(0, base.missingSongs - likedIds.size),
-    missingSongInstances: Math.max(0, base.missingSongInstances - trackOccurrences),
-    albumsWithMissingSongs: (state.result.albumsWithMissingSongs ?? []).filter((group) =>
-      group.tracks.some((track) => !state.changes.tracks.has(track.id))
-    ).length,
-    unlikedAlbums: Math.max(0, base.unlikedAlbums - savedAlbums),
-    likedSongsInUnlikedAlbums: Math.max(0, base.likedSongsInUnlikedAlbums - songsInSavedAlbums),
+    likedSongs: Math.max(
+      0,
+      base.likedSongs + state.changes.tracks.size - state.changes.removedTracks.size
+    ),
+    likedAlbums: Math.max(
+      0,
+      base.likedAlbums + state.changes.albums.size - state.changes.removedAlbums.size
+    ),
+    missingSongs: counts.missingIds.size,
+    missingSongInstances: counts.missingInstances,
+    albumsWithMissingSongs: counts.albumsWithMissingSongs,
+    unlikedAlbums: counts.unlikedAlbums,
+    likedSongsInUnlikedAlbums: counts.likedSongsInUnlikedAlbums,
   };
 }
 
 function sessionChangeCount() {
-  const { likedIds, savedAlbums } = changeCounts();
-  return likedIds.size + savedAlbums;
+  const { tracks, albums, removedTracks, removedAlbums } = state.changes;
+  return tracks.size + albums.size + removedTracks.size + removedAlbums.size;
 }
 
 function renderSummary(result) {
@@ -794,6 +833,25 @@ function trackRow(track, { likeable = false } = {}) {
   );
 }
 
+function albumOpenLink(album) {
+  if (!album.url) return null;
+
+  return h(
+    'a',
+    {
+      class: 'album-open',
+      href: album.url,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      title: 'Open album in Spotify',
+      'aria-label': `Open ${album.name} in Spotify`,
+      onclick: (event) => event.stopPropagation(),
+    },
+    h('span', { class: 'album-open-text' }, 'Open album in Spotify'),
+    icon('external')
+  );
+}
+
 function groupElement({
   id,
   album,
@@ -803,7 +861,7 @@ function groupElement({
   tracks,
   open,
   kind,
-  footerAction = null,
+  footerActions = [],
   likeable = false,
 }) {
   const article = h('article', {
@@ -812,17 +870,23 @@ function groupElement({
   });
 
   const head = h(
-    'button',
+    'div',
     {
       class: 'group-head',
-      type: 'button',
+      role: 'button',
+      tabindex: '0',
       'aria-expanded': String(open),
     },
     albumArt(album),
     h(
       'span',
       { class: 'group-title' },
-      h('span', { class: 'group-name', title: album.name }, album.name),
+      h(
+        'span',
+        { class: 'group-title-row' },
+        h('span', { class: 'group-name', title: album.name }, album.name),
+        albumOpenLink(album)
+      ),
       h('span', { class: 'group-sub' }, sub)
     ),
     h(
@@ -837,21 +901,8 @@ function groupElement({
   for (const track of tracks) body.append(trackRow(track, { likeable }));
 
   const foot = h('div', { class: 'group-foot' });
-  if (footerAction) foot.append(footerAction);
-  if (album.url) {
-    foot.append(
-      h(
-        'a',
-        {
-          class: 'album-open',
-          href: album.url,
-          target: '_blank',
-          rel: 'noopener noreferrer',
-        },
-        'Open album in Spotify',
-        icon('external')
-      )
-    );
+  for (const action of footerActions) {
+    if (action) foot.append(action);
   }
   if (foot.childElementCount) body.append(foot);
 
@@ -917,6 +968,48 @@ function likeAllButton(group) {
   );
 }
 
+function unlikeAlbumButton(group) {
+  const removed = state.changes.removedAlbums.has(group.album.id);
+  const pending = state.pending.has(`album:${group.album.id}`);
+
+  return h(
+    'button',
+    {
+      class: `btn tiny ${removed ? 'secondary' : 'danger'}`,
+      type: 'button',
+      dataset: { action: removed ? 'save-album' : 'remove-album', id: group.album.id },
+      disabled: pending,
+      title: removed
+        ? 'Save this album to Liked Albums'
+        : 'Remove this album from Liked Albums',
+      'aria-pressed': String(removed),
+    },
+    pending ? '…' : removed ? 'Like album' : 'Unlike album'
+  );
+}
+
+function unlikeAllSongsButton(group) {
+  const remaining = group.songs.filter(
+    (song) => !state.changes.removedTracks.has(song.id)
+  );
+  if (remaining.length === 0) return null;
+
+  const pending = state.pending.has(`bulk-remove:${group.album.id}`);
+
+  return h(
+    'button',
+    {
+      class: 'btn tiny danger',
+      type: 'button',
+      dataset: { action: 'unlike-album-songs', id: group.album.id },
+      disabled: pending,
+    },
+    pending
+      ? 'Unliking…'
+      : `Unlike all ${remaining.length} song${remaining.length === 1 ? '' : 's'}`
+  );
+}
+
 function renderSongGroups(groups) {
   const query = state.query;
   songsList.replaceChildren();
@@ -929,25 +1022,29 @@ function renderSongGroups(groups) {
 
     shown += 1;
     const open = query ? true : state.expandedSongs.has(group.album.id);
+    const albumRemoved = state.changes.removedAlbums.has(group.album.id);
     const remaining = group.tracks.filter(
       (track) => !state.changes.tracks.has(track.id)
     ).length;
-    const sub =
-      `${group.album.artists.join(', ') || 'Unknown artist'} · ` +
-      `${remaining} of ${group.totalTracks} track${group.totalTracks === 1 ? '' : 's'} not liked`;
+    const sub = albumRemoved
+      ? `${group.album.artists.join(', ') || 'Unknown artist'} · removed from Liked Albums`
+      : `${group.album.artists.join(', ') || 'Unknown artist'} · ` +
+        `${remaining} of ${group.totalTracks} track${group.totalTracks === 1 ? '' : 's'} not liked`;
 
     songsList.append(
       groupElement({
         id: group.album.id,
         album: group.album,
         sub,
-        pill: remaining ? `${remaining} missing` : 'all liked',
-        pillClass: remaining ? '' : 'done-pill',
+        pill: albumRemoved ? 'album removed' : remaining ? `${remaining} missing` : 'all liked',
+        pillClass: albumRemoved || !remaining ? 'done-pill' : '',
         tracks,
         open,
         kind: 'songs',
         likeable: true,
-        footerAction: canEdit() ? likeAllButton(group) : null,
+        footerActions: canEdit()
+          ? [likeAllButton(group), unlikeAlbumButton(group)]
+          : [],
       })
     );
   }
@@ -961,7 +1058,16 @@ function renderAlbumGroups(groups) {
   let shown = 0;
 
   for (const group of groups) {
-    const songs = visibleAlbumSongs(group, query);
+    const remainingSongs = group.songs.filter(
+      (song) => !state.changes.removedTracks.has(song.id)
+    );
+    // A group with every liked song removed is no longer an unliked album
+    // behind any liked songs, so it drops off the list entirely.
+    if (remainingSongs.length === 0) continue;
+
+    const songs = visibleAlbumSongs(group, query).filter(
+      (song) => !state.changes.removedTracks.has(song.id)
+    );
     const albumHit = !query || albumMatchesQuery(group.album, query);
     if (query && !albumHit && songs.length === 0) continue;
 
@@ -981,12 +1087,14 @@ function renderAlbumGroups(groups) {
         sub,
         pill: saved
           ? 'album saved'
-          : `${group.songs.length} liked song${group.songs.length === 1 ? '' : 's'}`,
+          : `${remainingSongs.length} liked song${remainingSongs.length === 1 ? '' : 's'}`,
         pillClass: saved ? 'done-pill' : 'album-pill',
         tracks: songs,
         open,
         kind: 'albums',
-        footerAction: canEdit() ? albumActionButton(group) : null,
+        footerActions: canEdit()
+          ? [albumActionButton(group), unlikeAllSongsButton(group)]
+          : [],
       })
     );
   }
@@ -1041,6 +1149,18 @@ function toggleGroup(event) {
 songsList.addEventListener('click', toggleGroup);
 albumsList.addEventListener('click', toggleGroup);
 
+function toggleGroupKey(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (event.target.closest('.album-open')) return;
+  const head = event.target.closest('.group-head');
+  if (!head) return;
+  event.preventDefault();
+  toggleGroup(event);
+}
+
+songsList.addEventListener('keydown', toggleGroupKey);
+albumsList.addEventListener('keydown', toggleGroupKey);
+
 /* ---------- Library changes ---------- */
 
 function markPending(keys, on) {
@@ -1093,8 +1213,18 @@ async function changeTracks(ids, action, extraPending = []) {
   try {
     await postLibraryChange('tracks', action, targets);
     for (const id of targets) {
-      if (action === 'save') state.changes.tracks.add(id);
-      else state.changes.tracks.delete(id);
+      if (action === 'save') {
+        // Re-liking a song removed earlier restores the original state, while
+        // liking a previously unliked song is a new addition.
+        if (state.changes.removedTracks.has(id)) state.changes.removedTracks.delete(id);
+        else state.changes.tracks.add(id);
+      } else if (state.changes.tracks.has(id)) {
+        // Reverting a like added earlier in this session restores the
+        // original state, so it should not count as a removal.
+        state.changes.tracks.delete(id);
+      } else {
+        state.changes.removedTracks.add(id);
+      }
     }
     clearCachedResult();
     toast(
@@ -1121,8 +1251,14 @@ async function changeAlbums(ids, action) {
   try {
     await postLibraryChange('albums', action, targets);
     for (const id of targets) {
-      if (action === 'save') state.changes.albums.add(id);
-      else state.changes.albums.delete(id);
+      if (action === 'save') {
+        if (state.changes.removedAlbums.has(id)) state.changes.removedAlbums.delete(id);
+        else state.changes.albums.add(id);
+      } else if (state.changes.albums.has(id)) {
+        state.changes.albums.delete(id);
+      } else {
+        state.changes.removedAlbums.add(id);
+      }
     }
     clearCachedResult();
     toast(
@@ -1162,6 +1298,15 @@ function handleLibraryAction(event) {
       .filter((track) => !state.changes.tracks.has(track.id))
       .map((track) => track.id);
     changeTracks(ids, 'save', [`bulk:${id}`]);
+  } else if (action === 'unlike-album-songs') {
+    const group = (state.result?.unlikedAlbumGroups ?? []).find(
+      (item) => item.album.id === id
+    );
+    if (!group) return;
+    const ids = group.songs
+      .filter((song) => !state.changes.removedTracks.has(song.id))
+      .map((song) => song.id);
+    changeTracks(ids, 'remove', [`bulk-remove:${id}`]);
   }
 }
 
